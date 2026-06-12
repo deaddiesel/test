@@ -746,38 +746,16 @@ public class GuideScreen extends Screen {
                 renderer.originalMarkdownLines.add(line.trim());
                 renderer.rawTextLines.add(line.trim());
                 renderer.linkTargetsPerLine.add(new ArrayList<>());
-            } else {
+            }                 else {
                 String lineText = line.trim();
                 if (lineText.isEmpty()) {
                     renderer.rawTextLines.add("");
                     renderer.originalMarkdownLines.add("");
                     renderer.linkTargetsPerLine.add(new ArrayList<>());
                 } else {
-                    String cleanLine = lineText.replaceAll("§.", "");
-                    if (cleanLine.equals("---") || cleanLine.equals("***") || cleanLine.matches("^-{3,}$") || cleanLine.matches("^\\*{3,}$")) {
-                        int colorHex = 0xFF3A3A3A;
-                        boolean isBold = lineText.toLowerCase().contains("§l");
-
-                        for (int pos = 0; pos < lineText.length() - 1; pos++) {
-                            if (lineText.charAt(pos) == '§') {
-                                char code = lineText.charAt(pos + 1);
-                                net.minecraft.ChatFormatting formatting = net.minecraft.ChatFormatting.getByCode(code);
-                                if (formatting != null && formatting.getColor() != null) {
-                                    colorHex = 0xFF000000 | formatting.getColor();
-                                    break;
-                                }
-                            }
-                        }
-
-                        String dividerMarker = "@divider:" + Integer.toHexString(colorHex) + ":" + isBold;
-                        renderer.originalMarkdownLines.add(dividerMarker);
-                        renderer.rawTextLines.add(dividerMarker);
-                        renderer.linkTargetsPerLine.add(new ArrayList<>());
-                    } else {
-                        renderer.linkTargetsPerLine.add(renderer.extractLinkTargets(lineText));
-                        renderer.originalMarkdownLines.add(lineText);
-                        renderer.rawTextLines.add(renderer.processLinksForDisplay(lineText));
-                    }
+                    renderer.linkTargetsPerLine.add(renderer.extractLinkTargets(lineText));
+                    renderer.originalMarkdownLines.add(lineText);
+                    renderer.rawTextLines.add(renderer.processLinksForDisplay(lineText));
                 }
             }
         }
