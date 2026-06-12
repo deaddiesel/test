@@ -171,25 +171,133 @@ public class GuideRenderer {
         int textX = TEXT_START_X;
         int controlX = width - CONTROL_PANEL_OFFSET;
         int maxTextWidth = hasStructure ? Math.max(MIN_TEXT_WIDTH, controlX - textX - TEXT_PADDING) : Math.max(MIN_TEXT_WIDTH, width - textX - TEXT_PADDING);
-        int totalLines = 0;
         var font = Minecraft.getInstance().font;
 
-        for (String line : rawTextLines) {
-            if (line.startsWith("@image:") || line.startsWith("@gif:") || line.startsWith("@mob:") ||
-                    line.startsWith("@item:") || line.startsWith("@inline_item:") || line.startsWith("@matrix_craft:") ||
-                    line.startsWith("@divider:") || line.startsWith("@tab:") || line.startsWith("@structure:") ||
-                    line.startsWith("@submenu:") || line.startsWith("@spoiler:") || line.equals("@endspoiler")) {
+        int rightBoundary = hasStructure ? (width - CONTROL_PANEL_OFFSET - 12) : (width - 20);
+
+        // Начинаем расчет с базового отступа сверху
+        int contentHeight = TEXT_START_Y;
+
+        int imageIndex = 0;
+        int spoilerIndex = 0;
+        int rawTextIndex = 0;
+        boolean insideSpoiler = false;
+        boolean spoilerOpen = true;
+
+        for (int i = 0; i < originalMarkdownLines.size(); i++) {
+            String sourceLine = originalMarkdownLines.get(i);
+            if (sourceLine == null) continue;
+
+            if (sourceLine.startsWith("@spoiler:")) {
+                spoilerOpen = spoilerStates.getOrDefault(spoilerIndex, false);
+                insideSpoiler = true;
+                contentHeight += LINE_HEIGHT + 8;
+                spoilerIndex++;
                 continue;
             }
-            totalLines += line.isEmpty() ? 1 : font.split(parseFormattedText(line), maxTextWidth).size();
+
+            if (sourceLine.equals("@endspoiler")) {
+                insideSpoiler = false;
+                continue;
+            }
+
+            if (insideSpoiler && !spoilerOpen) {
+                // Если спойлер закрыт, прокручиваем индекс текста вперед для обычных строк
+                if (!sourceLine.startsWith("@image:") && !sourceLine.startsWith("@gif:") && !sourceLine.startsWith("@mob:") && !sourceLine.startsWith("@item:") && !sourceLine.startsWith("@inline_item:") && !sourceLine.startsWith("@matrix_craft:") && !sourceLine.startsWith("@tab:") && !sourceLine.startsWith("@structure:") && !sourceLine.startsWith("@submenu:")) {
+                    String clean = sourceLine.trim().replaceAll("§.", "");
+                    boolean isSep = clean.equals("---") || clean.equals("***") || clean.matches("^-{3,}$") || clean.matches("^\\*{3,}$");
+                    if (!isSep && rawTextIndex < rawTextLines.size()) {
+                        rawTextIndex++;
+                    }
+                }
+                continue;
+            }
+
+            String trimmedLine = sourceLine.trim();
+            String cleanLine = trimmedLine.replaceAll("§.", "");
+            boolean isLineSeparator = cleanLine.equals("---") || cleanLine.equals("***") || cleanLine.matches("^-{3,}$") || cleanLine.matches("^\\*{3,}$");
+
+            if (isLineSeparator) {
+                contentHeight += LINE_HEIGHT + 6;
+                continue;
+            }
+
+            if (sourceLine.startsWith("@inline_item:")) {
+                contentHeight += LINE_HEIGHT;
+                continue;
+            }
+
+            if (sourceLine.startsWith("@matrix_craft:")) {
+                contentHeight += 60; // Фиксированная высота сетки крафта из твоего рендера
+                continue;
+            }
+
+            if (sourceLine.startsWith("@image:")) {
+                if (imageIndex < imagesToRender.size()) {
+                    contentHeight += imagesToRender.get(imageIndex).drawH() + 5;
+                    imageIndex++;
+                }
+                continue;
+            }
+
+            if (sourceLine.startsWith("@gif:")) {
+                int gifIndex = (int) originalMarkdownLines.subList(0, i).stream().filter(s -> s.startsWith("@gif:")).count();
+                if (gifIndex < gifsToRender.size()) {
+                    contentHeight += gifsToRender.get(gifIndex).drawH() + 5;
+                }
+                continue;
+            }
+
+            if (sourceLine.startsWith("@mob:")) {
+                int mobIndex = (int) originalMarkdownLines.subList(0, i).stream().filter(s -> s.startsWith("@mob:")).count();
+                if (mobIndex < mobsToRender.size()) {
+                    int availableWidth = hasStructure ? Math.max(MIN_TEXT_WIDTH, (width - CONTROL_PANEL_OFFSET) - textX - TEXT_PADDING) : Math.max(MIN_TEXT_WIDTH, width - textX - TEXT_PADDING);
+                    int screenHeight = Minecraft.getInstance().getWindow().getGuiScaledHeight();
+                    int availableHeight = screenHeight - SCROLL_AREA_TOP - SCROLL_AREA_BOTTOM - 40;
+                    contentHeight += calculateMobSize(mobsToRender.get(mobIndex), availableWidth, availableHeight) + 20;
+                }
+                continue;
+            }
+
+            if (sourceLine.startsWith("@item:")) {
+                String[] parts = sourceLine.substring(6).trim().split(",");
+                if (parts.length >= 2) {
+                    try {
+                        int w = Integer.parseInt(parts[1].trim());
+                        int availableWidth = rightBoundary - textX;
+                        int finalSize = Math.min(w, availableWidth);
+                        finalSize = Math.max(finalSize, 70);
+                        contentHeight += finalSize + 20;
+                    } catch (Exception ignored) {}
+                }
+                continue;
+            }
+
+            if (sourceLine.startsWith("@tab:") || sourceLine.startsWith("@structure:") || sourceLine.startsWith("@submenu:")) {
+                continue;
+            }
+
+            // РАСЧЕТ ВЫСОТЫ ДЛЯ ОБЫЧНОГО ТЕКСТА И СПИСКОВ БОССОВ
+            if (rawTextIndex >= rawTextLines.size()) continue;
+            String displayLine = rawTextLines.get(rawTextIndex);
+            rawTextIndex++;
+
+            if (displayLine.isEmpty()) {
+                contentHeight += LINE_HEIGHT;
+                continue;
+            }
+
+            Component styled = parseFormattedText(displayLine);
+            List<FormattedCharSequence> splitLines = font.split(styled, maxTextWidth);
+            // Прибавляем высоту за каждую РЕАЛЬНО ПОЛУЧЕННУЮ строчку на экране после переносов!
+            contentHeight += splitLines.size() * LINE_HEIGHT;
         }
 
-        int contentHeight = calculateContentHeight(totalLines);
         int visibleHeight = height - SCROLL_AREA_TOP - SCROLL_AREA_BOTTOM;
-        int textBuffer = totalLines / 5;
-        maxScroll = Math.max(0, (contentHeight + textBuffer) - visibleHeight);
-        if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+        // Вычисляем чистый скролл с безопасным отступом в 12 пикселей снизу
+        maxScroll = Math.max(0, contentHeight - visibleHeight - TEXT_START_Y + 12);
 
+        if (scrollOffset > maxScroll) scrollOffset = maxScroll;
     }
 
     private record LinkRange(String text, String target, int startChar, int endChar) {}
@@ -684,58 +792,6 @@ public class GuideRenderer {
         gui.fill(x1, y2 - 1, x2, y2, inlineColor);
         gui.fill(x1, y1 + 1, x1 + 1, y2 - 1, inlineColor);
         gui.fill(x2 - 1, y1 + 1, x2, y2 - 1, inlineColor);
-    }
-
-    private int calculateContentHeight(int totalLines) {
-        int contentHeight = totalLines * LINE_HEIGHT;
-        // Берём текущую высоту экрана для точного расчёта мобов
-        int screenHeight = net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScaledHeight();
-        int availableHeight = screenHeight - SCROLL_AREA_TOP - SCROLL_AREA_BOTTOM - 40;
-
-        for (GifInfo gif : gifsToRender) contentHeight += gif.drawH() + 5;
-        for (ImageInfo img : imagesToRender) contentHeight += img.drawH() + 5;
-
-        // СИНХРОНИЗАЦИЯ МОБОВ: Считаем высоту ровно так же, как в calculateMobSize
-        for (MobInfo mob : mobsToRender) {
-            int finalMobSize = Math.min(mob.drawW(), screenHeight); // Упрощенный доступ к доступной ширине
-            finalMobSize = Math.min(finalMobSize, availableHeight);
-            contentHeight += finalMobSize + 20; // 10 сверху + 10 снизу, как в рендере
-        }
-
-        int spoilerIdx = 0;
-        boolean insideSpoiler = false;
-
-        for (String sourceLine : originalMarkdownLines) {
-            if (sourceLine.startsWith("@spoiler:")) {
-                insideSpoiler = true;
-                contentHeight += LINE_HEIGHT + 8;
-                spoilerIdx++;
-                continue;
-            }
-            if (sourceLine.equals("@endspoiler")) {
-                insideSpoiler = false;
-                continue;
-            }
-            if (insideSpoiler && !spoilerStates.getOrDefault(spoilerIdx - 1, false)) {
-                continue;
-            }
-
-            if (sourceLine.startsWith("@inline_item:")) contentHeight += ITEM_ROW_HEIGHT;
-            else if (sourceLine.startsWith("@matrix_craft:")) contentHeight += 56 + 12;
-            else if (sourceLine.startsWith("@divider:")) contentHeight += LINE_HEIGHT + 6;
-                // СИНХРОНИЗАЦИЯ ПРЕДМЕТОВ: Считаем высоту один в один по формуле из рендера
-            else if (sourceLine.startsWith("@item:")) {
-                String[] parts = sourceLine.substring(6).trim().split(",");
-                if (parts.length >= 2) {
-                    try {
-                        int w = Integer.parseInt(parts[1].trim());
-                        int finalSize = Math.max(w, 70); // Ограничение минимума в 70 пикселей из рендера
-                        contentHeight += finalSize + 20; // Окончательный зазор предмета (10+10)
-                    } catch (NumberFormatException ignored) {}
-                }
-            }
-        }
-        return contentHeight + 12;
     }
 
     public ItemStack getItemStackAt(double mx, double my) {
