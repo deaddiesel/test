@@ -175,15 +175,21 @@ public class GuideRenderer {
         var font = Minecraft.getInstance().font;
 
         for (String line : rawTextLines) {
+            if (line.startsWith("@image:") || line.startsWith("@gif:") || line.startsWith("@mob:") ||
+                    line.startsWith("@item:") || line.startsWith("@inline_item:") || line.startsWith("@matrix_craft:") ||
+                    line.startsWith("@divider:") || line.startsWith("@tab:") || line.startsWith("@structure:") ||
+                    line.startsWith("@submenu:") || line.startsWith("@spoiler:") || line.equals("@endspoiler")) {
+                continue;
+            }
             totalLines += line.isEmpty() ? 1 : font.split(parseFormattedText(line), maxTextWidth).size();
         }
 
         int contentHeight = calculateContentHeight(totalLines);
-
-        int visibleHeight = height - SCROLL_AREA_TOP - SCROLL_AREA_BOTTOM + 10;
-        maxScroll = Math.max(0, contentHeight - visibleHeight);
-
+        int visibleHeight = height - SCROLL_AREA_TOP - SCROLL_AREA_BOTTOM;
+        int textBuffer = totalLines / 5;
+        maxScroll = Math.max(0, (contentHeight + textBuffer) - visibleHeight);
         if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+
     }
 
     private record LinkRange(String text, String target, int startChar, int endChar) {}
@@ -309,7 +315,6 @@ public class GuideRenderer {
 
         int imageIndex = 0;
         int spoilerIndex = 0;
-        int textIndex = 0;
         boolean insideSpoiler = false;
         boolean spoilerOpen = true;
 
@@ -346,33 +351,6 @@ public class GuideRenderer {
 
             if (insideSpoiler && !spoilerOpen) {
                 continue;
-            }
-
-            String trimmedLine = sourceLine.trim();
-            String cleanLine = trimmedLine.replaceAll("§.", "");
-            boolean isLineSeparator = cleanLine.equals("---") || cleanLine.equals("***") || cleanLine.matches("^-{3,}$") || cleanLine.matches("^\\*{3,}$");
-
-            if (isLineSeparator) {
-                if (currentY > SCROLL_AREA_TOP && currentY < height - SCROLL_AREA_BOTTOM) {
-                    int lineColor = 0xFF3A3A3A;
-                    boolean isBold = trimmedLine.toLowerCase().contains("§l");
-
-                    for (int pos = 0; pos < trimmedLine.length() - 1; pos++) {
-                        if (trimmedLine.charAt(pos) == '§') {
-                            char code = trimmedLine.charAt(pos + 1);
-                            net.minecraft.ChatFormatting formatting = net.minecraft.ChatFormatting.getByCode(code);
-                            if (formatting != null && formatting.getColor() != null) {
-                                lineColor = 0xFF000000 | formatting.getColor();
-                                break;
-                            }
-                        }
-                    }
-
-                    int thickness = isBold ? 2 : 1;
-                    guiGraphics.fill(textX, currentY + 4, rightBoundary - 6, currentY + 4 + thickness, lineColor);
-                }
-
-                currentY += LINE_HEIGHT + 6;
             }
 
             if (sourceLine.startsWith("@inline_item:")) {
@@ -533,6 +511,7 @@ public class GuideRenderer {
                 }
                 continue;
             }
+
             if (sourceLine.startsWith("@item:")) {
                 String[] parts = sourceLine.substring(6).trim().split(",");
                 if (parts.length >= 2) {
@@ -571,16 +550,12 @@ public class GuideRenderer {
                 continue;
             }
 
-            String displayLine;
-            if (isLineSeparator) {
-                displayLine = sourceLine;
-                if (textIndex < rawTextLines.size() && rawTextLines.get(textIndex).contains("---")) {
-                    textIndex++;
-                }
-            } else {
-                if (textIndex >= rawTextLines.size()) continue;
-                displayLine = rawTextLines.get(textIndex);
-                textIndex++;
+            if (i >= rawTextLines.size()) continue;
+            String displayLine = rawTextLines.get(i);
+
+            if (displayLine.startsWith("@divider:")) {
+                currentY = renderHorizontalDivider(guiGraphics, displayLine, textX, currentY, rightBoundary, height);
+                continue;
             }
 
             if (displayLine.isEmpty()) {
@@ -595,10 +570,6 @@ public class GuideRenderer {
             List<FormattedCharSequence> splitLines = font.split(styled, maxTextWidth);
 
             for (FormattedCharSequence sl : splitLines) {
-                if (isLineSeparator) {
-                    continue;
-                }
-
                 if (currentY > SCROLL_AREA_TOP && currentY < height - SCROLL_AREA_BOTTOM) {
                     guiGraphics.drawString(font, sl, textX, currentY, 0xFFFFFF, false);
 
@@ -626,7 +597,7 @@ public class GuideRenderer {
         }
     }
 
-                private int renderSingleInlineItem(GuiGraphics g, int x, int y, int mx, int my, int rightBound, String itemName) {
+    private int renderSingleInlineItem(GuiGraphics g, int x, int y, int mx, int my, int rightBound, String itemName) {
         int iy = y + 4;
 
         var screen = Minecraft.getInstance().screen;
@@ -717,10 +688,19 @@ public class GuideRenderer {
 
     private int calculateContentHeight(int totalLines) {
         int contentHeight = totalLines * LINE_HEIGHT;
+        // Берём текущую высоту экрана для точного расчёта мобов
+        int screenHeight = net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScaledHeight();
+        int availableHeight = screenHeight - SCROLL_AREA_TOP - SCROLL_AREA_BOTTOM - 40;
 
         for (GifInfo gif : gifsToRender) contentHeight += gif.drawH() + 5;
         for (ImageInfo img : imagesToRender) contentHeight += img.drawH() + 5;
-        for (MobInfo mob : mobsToRender) contentHeight += mob.drawH() + 20;
+
+        // СИНХРОНИЗАЦИЯ МОБОВ: Считаем высоту ровно так же, как в calculateMobSize
+        for (MobInfo mob : mobsToRender) {
+            int finalMobSize = Math.min(mob.drawW(), screenHeight); // Упрощенный доступ к доступной ширине
+            finalMobSize = Math.min(finalMobSize, availableHeight);
+            contentHeight += finalMobSize + 20; // 10 сверху + 10 снизу, как в рендере
+        }
 
         int spoilerIdx = 0;
         boolean insideSpoiler = false;
@@ -742,17 +722,20 @@ public class GuideRenderer {
 
             if (sourceLine.startsWith("@inline_item:")) contentHeight += ITEM_ROW_HEIGHT;
             else if (sourceLine.startsWith("@matrix_craft:")) contentHeight += 56 + 12;
+            else if (sourceLine.startsWith("@divider:")) contentHeight += LINE_HEIGHT + 6;
+                // СИНХРОНИЗАЦИЯ ПРЕДМЕТОВ: Считаем высоту один в один по формуле из рендера
             else if (sourceLine.startsWith("@item:")) {
                 String[] parts = sourceLine.substring(6).trim().split(",");
                 if (parts.length >= 2) {
                     try {
-                        int size = Integer.parseInt(parts[1].trim());
-                        contentHeight += Math.max(size, 50) + 20;
+                        int w = Integer.parseInt(parts[1].trim());
+                        int finalSize = Math.max(w, 70); // Ограничение минимума в 70 пикселей из рендера
+                        contentHeight += finalSize + 20; // Окончательный зазор предмета (10+10)
                     } catch (NumberFormatException ignored) {}
                 }
             }
         }
-        return contentHeight + 25;
+        return contentHeight + 12;
     }
 
     public ItemStack getItemStackAt(double mx, double my) {
@@ -791,5 +774,21 @@ public class GuideRenderer {
         return hasStructure
                 ? (width - CONTROL_PANEL_OFFSET - TEXT_START_X - TEXT_PADDING)
                 : (width - TEXT_START_X - TEXT_PADDING - 20);
+    }
+
+    private int renderHorizontalDivider(GuiGraphics guiGraphics, String marker, int textX, int currentY, int rightBoundary, int screenHeight) {
+        if (currentY > SCROLL_AREA_TOP && currentY < screenHeight - SCROLL_AREA_BOTTOM) {
+            try {
+                String[] parts = marker.substring(9).split(":");
+                int lineColor = (int) Long.parseLong(parts[0], 16);
+                boolean isBold = Boolean.parseBoolean(parts[1]);
+                int thickness = isBold ? 2 : 1;
+
+                guiGraphics.fill(textX, currentY + 4, rightBoundary - 6, currentY + 4 + thickness, lineColor);
+            } catch (Exception e) {
+                guiGraphics.fill(textX, currentY + 4, rightBoundary - 6, currentY + 5, 0xFF3A3A3A);
+            }
+        }
+        return currentY + LINE_HEIGHT + 6;
     }
 }
