@@ -1,167 +1,185 @@
-    @Override
-    protected void init() {
-        super.init();
+    private void generateMenuButtons() {
+        String query = searchBox.getValue().toLowerCase().trim();
+        String lang = Minecraft.getInstance().getLanguageManager().getSelected();
 
-        String oldText = (searchBox != null) ? searchBox.getValue() : "";
-        boolean wasFocused = (searchBox != null) && searchBox.isFocused();
-        int oldCursor = (searchBox != null) ? searchBox.getCursorPosition() : 0;
-        int oldHighlight = getSearchBoxHighlight();
+        var chapters = navigator.getChapters();
+        var chapterFiles = navigator.getChapterFiles();
+        var chapterNames = navigator.getChapterNames();
 
-        clearWidgets();
-        rightPanelButtons.clear();
-
-        searchBox = new GuideEditBox(font, 10, 10, 104, 14, Component.translatable("guide.search.placeholder"));
-        searchBox.setValue(oldText);
-        searchBox.setFocused(wasFocused);
-        searchBox.setCursorPosition(oldCursor);
-        setSearchBoxHighlight(oldHighlight);
-
-        if (!oldText.isEmpty()) {
-            searchBox.setSuggestion("");
+        if (navigator.currentChapterIndex >= chapterFiles.size()) {
+            navigator.currentChapterIndex = Math.max(0, chapterFiles.size() - 1);
         }
 
-        searchBox.setResponder(text -> {
-            searchDebounceTicks = 4;
-            if (!text.isEmpty()) {
-                searchBox.setSuggestion("");
-            } else {
-                searchBox.setSuggestion(Component.translatable("guide.search.placeholder").getString());
+        int availableHeight = height - TOP_RESERVED - BOTTOM_BUTTONS_HEIGHT;
+        int maxButtonsPerPage = Math.min(MAX_BUTTONS_PER_PAGE, Math.max(5, availableHeight / BUTTON_SPACING));
+        int buttonWidth = Math.min(104, SIDEBAR_WIDTH - 10);
+
+        List<Runnable> totalMenuRegistry = new ArrayList<>();
+
+        for (int i = 0; i < chapterFiles.size(); i++) {
+            final int index = i;
+            final String file = chapterFiles.get(i);
+            final String visibleName = chapterNames.get(i);
+            final ItemStack icon = chapters.get(i).icon();
+
+            if (navigator.activeItemFilterOverride != null) {
+                var boundChapters = GuideNavigator.getItemToChapterMap().get(navigator.activeItemFilterOverride);
+                if (boundChapters == null || !boundChapters.contains(file)) continue;
             }
-            renderer.scrollOffset = 0;
-        });
-        addRenderableWidget(searchBox);
 
-        if (navigator.activeItemFilterOverride != null) {
-            searchBox.setWidth(86);
-            Button clearFilterBtn = Button.builder(Component.literal("§c×"), (btn) -> {
-                navigator.activeItemFilterOverride = null;
-                rebuildWidgets();
-            }).bounds(98, 9, 16, 16).build();
-            addRenderableWidget(clearFilterBtn);
-        }
+            if (navigator.isFavoritesFilterActive) {
+                boolean chapterOrSubInFav = navigator.isFavorite(file);
+                if (!chapterOrSubInFav) {
+                    String mdPath = buildMdPath(lang, file);
+                    ResourceLocation loc = ResourceLocation.parse(bookNamespace + ":" + mdPath);
+                    var resOpt = Minecraft.getInstance().getResourceManager().getResource(loc);
+                    if (resOpt.isPresent()) {
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(resOpt.get().open(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                if (line.trim().startsWith("@submenu:")) {
+                                    for (String sub : line.replace("@submenu:", "").trim().split(",")) {
+                                        if (navigator.isFavorite(sub.trim())) { chapterOrSubInFav = true; break; }
+                                    }
+                                    break;
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+                if (!chapterOrSubInFav) continue;
+            }
 
-        navigator.loadChaptersFromIndexFile();
-        generateMenuButtons();
-        initControlButtons();
-        initUtilityButtons();
+            String mdPath = buildMdPath(lang, file);
+            ResourceLocation loc = ResourceLocation.parse(bookNamespace + ":" + mdPath);
+            List<String> submenuItems = new ArrayList<>();
 
-        loadChapterContentDirectly();
-        updateElementsVisibility();
-        if (this.customCursor == 0L) {
-            this.applyCustomCursor();
-        }
-    }
-
-    private void initControlButtons() {
-        int ctrlX = width - 160;
-        int panelLeft = ctrlX + 10;
-        int btnH = 16;
-        int gap = 4;
-        int bottomSafe = 8;
-
-        int rotBtnY = height - bottomSafe - btnH;
-        int layerBtnY = rotBtnY - btnH - gap;
-
-        structurePanel.syncLayout(panelLeft, layerBtnY);
-
-        addRightBtn(Button.builder(Component.translatable("guide.button.zoom_out"),
-                        b -> structurePanel.zoomScale = Math.max(0.25f, structurePanel.zoomScale - 0.15f))
-                .bounds(panelLeft, 10, 68, btnH).build());
-        addRightBtn(Button.builder(Component.translatable("guide.button.zoom_in"),
-                        b -> structurePanel.zoomScale = Math.min(1.4f, structurePanel.zoomScale + 0.15f))
-                .bounds(panelLeft + 72, 10, 68, btnH).build());
-
-        addRightBtn(Button.builder(Component.translatable("guide.button.layer_down"),
-                        b -> { if (structurePanel.currentRenderLayer > -1) structurePanel.currentRenderLayer--; })
-                .bounds(panelLeft, layerBtnY, 44, btnH).build());
-        addRightBtn(Button.builder(Component.translatable("guide.button.layer_all"),
-                        b -> structurePanel.currentRenderLayer = -1)
-                .bounds(panelLeft + 48, layerBtnY, 44, btnH).build());
-        addRightBtn(Button.builder(Component.translatable("guide.button.layer_up"),
-                        b -> { if (structurePanel.currentRenderLayer < 16) structurePanel.currentRenderLayer++; })
-                .bounds(panelLeft + 96, layerBtnY, 44, btnH).build());
-
-        addRightBtn(Button.builder(Component.literal("◀"),
-                        b -> { structurePanel.isAutoRotating = false; structurePanel.rotationY -= 15.0f; })
-                .bounds(panelLeft, rotBtnY, 44, btnH).build());
-        addRightBtn(Button.builder(Component.translatable("guide.button.rot_auto"),
-                        b -> structurePanel.isAutoRotating = !structurePanel.isAutoRotating)
-                .bounds(panelLeft + 48, rotBtnY, 44, btnH).build());
-        addRightBtn(Button.builder(Component.literal("▶"),
-                        b -> { structurePanel.isAutoRotating = false; structurePanel.rotationY += 15.0f; })
-                .bounds(panelLeft + 96, rotBtnY, 44, btnH).build());
-    }
-
-    private void addRightBtn(Button b) { rightPanelButtons.add(b); addRenderableWidget(b); }
-
-    private void initUtilityButtons() {
-        int bottomRowY = height - 24;
-        int projRowY = height - 64;
-
-        projectionButton = Button.builder(Component.translatable("guide.button.projection"), btn -> {
-            var tabs = structurePanel.getStructureTabs();
-            int activeIndex = structurePanel.getActiveStructureIndex();
-
-            ResourceLocation structureLoc = null;
-            String displayName = "";
-
-            if (!tabs.isEmpty() && activeIndex < tabs.size()) {
-                var activeTab = tabs.get(activeIndex);
-                structureLoc = activeTab.location();
-
-                try {
-                    for (java.lang.reflect.Field field : activeTab.getClass().getDeclaredFields()) {
-                        if (field.getType() == String.class) {
-                            field.setAccessible(true);
-                            displayName = (String) field.get(activeTab);
+            var resOpt = Minecraft.getInstance().getResourceManager().getResource(loc);
+            if (resOpt.isPresent()) {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(resOpt.get().open(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.trim().startsWith("@submenu:")) {
+                            for (String sub : line.replace("@submenu:", "").trim().split(",")) {
+                                String subFile = sub.trim();
+                                if (!subFile.isEmpty()) submenuItems.add(subFile);
+                            }
                             break;
                         }
                     }
-                } catch (Exception e) {
-                    displayName = "";
+                } catch (Exception ignored) {}
+            }
+            boolean hasSubmenu = !submenuItems.isEmpty();
+
+            List<String> matchingSubs = new ArrayList<>();
+            for (String subFile : submenuItems) {
+                String subName = subFile;
+                int subIdx = chapterFiles.indexOf(subFile);
+                if (subIdx != -1 && subIdx < chapterNames.size()) subName = chapterNames.get(subIdx);
+                if (subName.toLowerCase().contains(query)) matchingSubs.add(subFile);
+            }
+
+            boolean chapterMatches = visibleName.toLowerCase().contains(query);
+            boolean submenuMatches = !matchingSubs.isEmpty();
+            if (!query.isEmpty() && !chapterMatches && !submenuMatches) continue;
+
+            final String label = navigator.isFavorite(file) ? "§e★§r " + visibleName : visibleName;
+            boolean isDirectlyActive = (index == navigator.currentChapterIndex && navigator.activeSubmenuFileOverride == null);
+            boolean isParentOfOpenSub = java.util.Objects.equals(file, navigator.parentChapterOfFile);
+            boolean isActive = isDirectlyActive || isParentOfOpenSub;
+
+            totalMenuRegistry.add(() -> {
+                ChapterButton menuButton = new ChapterButton(10, 0, buttonWidth, BUTTON_HEIGHT, Component.literal(label), icon, (btn) -> {
+                    navigator.currentChapterIndex = index;
+                    renderer.scrollOffset = 0;
+                    structurePanel.currentRenderLayer = -1;
+                    navigator.activeSubmenuFileOverride = null;
+                    if (!hasSubmenu) navigator.parentChapterOfFile = null;
+                    loadChapterContent();
+                });
+                menuButton.active = !isActive;
+                addRenderableWidget(menuButton);
+            });
+
+            boolean shouldExpand = isActive || (!query.isEmpty() && submenuMatches);
+            if (hasSubmenu && shouldExpand) {
+                List<String> subsToShow = (query.isEmpty() || isActive) ? submenuItems : matchingSubs;
+                for (String subFile : subsToShow) {
+                    final String finalSubFile = subFile;
+                    String subName = subFile;
+                    int subIdx = chapterFiles.indexOf(subFile);
+                    if (subIdx != -1 && subIdx < chapterNames.size()) subName = chapterNames.get(subIdx);
+
+                    if (navigator.isFavoritesFilterActive && !navigator.isFavorite(subFile)) continue;
+                    if (!isActive && !query.isEmpty() && !subName.toLowerCase().contains(query)) continue;
+
+                    final String subLabel = navigator.isFavorite(subFile) ? "  §e★§r " + subName : "  • " + subName;
+                    final boolean isSubActive = subFile.equals(navigator.activeSubmenuFileOverride);
+
+                    totalMenuRegistry.add(() -> {
+                        ChapterButton subBtn = new ChapterButton(10, 0, buttonWidth, BUTTON_HEIGHT, Component.literal(subLabel), ItemStack.EMPTY, (btn) -> {
+                            renderer.scrollOffset = 0;
+                            structurePanel.currentRenderLayer = -1;
+                            loadSubmenuChapterContent(finalSubFile);
+                        });
+                        subBtn.active = !isSubActive;
+                        addRenderableWidget(subBtn);
+                    });
                 }
-            } else {
-                String chapterFile = getCurrentChapterFile();
-                if (!chapterFile.isEmpty()) {
-                    structureLoc = ResourceLocation.fromNamespaceAndPath(bookNamespace, "structures/" + chapterFile);
-                    displayName = chapterFile;
+            }
+        }
+
+        int totalItems = totalMenuRegistry.size();
+        int calculatedPages = totalItems / maxButtonsPerPage;
+        if (totalItems % maxButtonsPerPage != 0) calculatedPages++;
+        if (calculatedPages == 0) calculatedPages = 1;
+        final int maxPages = calculatedPages;
+
+        if (currentMenuPage >= maxPages) currentMenuPage = maxPages - 1;
+        if (currentMenuPage < 0) currentMenuPage = 0;
+        this.actualMaxPages = maxPages;
+
+        int startIndex = currentMenuPage * maxButtonsPerPage;
+        int endIndex = Math.min(startIndex + maxButtonsPerPage, totalItems);
+        int buttonY = TOP_RESERVED;
+        int widgetsBefore = this.children().size();
+
+        for (int k = startIndex; k < endIndex; k++) {
+            totalMenuRegistry.get(k).run();
+            if (this.children().size() > widgetsBefore) {
+                var newWidget = this.children().get(this.children().size() - 1);
+                if (newWidget instanceof net.minecraft.client.gui.components.AbstractWidget widget) {
+                    widget.setY(buttonY);
                 }
+                widgetsBefore = this.children().size();
             }
+            buttonY += BUTTON_SPACING;
+        }
 
-            if (displayName == null || displayName.isEmpty() && structureLoc != null) {
-                displayName = structureLoc.getPath().replace("structures/", "").replace("_", " ");
-            }
+        if (maxPages > 1) {
+            int navY = height - 44;
 
-            if (structureLoc != null) {
-                PlacementProjector.setActiveStructure(structureLoc, displayName);
-                this.onClose();
-            }
-        }).bounds(10, projRowY, 104, 16).build();
-        addRenderableWidget(projectionButton);
+            Button prevBtn = Button.builder(Component.literal("◀"), (btn) -> {
+                if (currentMenuPage > 0) { currentMenuPage--; rebuildWidgets(); }
+            }).bounds(10, navY, 16, 16).build();
+            prevBtn.active = (currentMenuPage > 0);
+            addRenderableWidget(prevBtn);
 
-        Component favFilterComp = navigator.isFavoritesFilterActive
-                ? Component.translatable("guide.button.fav_filter_on")
-                : Component.translatable("guide.button.fav_filter_off");
-
-        Button btnFavoritesToggle = Button.builder(favFilterComp, btn -> {
-            navigator.isFavoritesFilterActive = !navigator.isFavoritesFilterActive;
-            rebuildWidgets();
-        }).bounds(10, bottomRowY, 50, 16).build();
-        addRenderableWidget(btnFavoritesToggle);
-
-        String currentFile = (navigator.activeSubmenuFileOverride != null)
-                ? navigator.activeSubmenuFileOverride
-                : getCurrentChapterFile();
-
-        Component favAddComp = navigator.isFavorite(currentFile)
-                ? Component.translatable("guide.button.fav_add_on")
-                : Component.translatable("guide.button.fav_add_off");
-
-        Button btnAddToFavorites = Button.builder(favAddComp, btn -> {
-            if (!currentFile.isEmpty()) {
-                navigator.toggleFavorite(currentFile);
-                rebuildWidgets();
-            }
-        }).bounds(64, bottomRowY, 50, 16).build();
-        addRenderableWidget(btnAddToFavorites);
+            Button nextBtn = Button.builder(Component.literal("▶"), (btn) -> {
+                if (currentMenuPage < maxPages - 1) { currentMenuPage++; rebuildWidgets(); }
+            }).bounds(98, navY, 16, 16).build();
+            nextBtn.active = (currentMenuPage < maxPages - 1);
+            addRenderableWidget(nextBtn);
+        }
     }
+
+    private static class ChapterButton extends Button {
+        private final ItemStack icon;
+        private static final int ICON_PAD = 4;
+        private static final int TEXT_PAD_NO_ICON = 6;
+        private float hoverTicks = 0.0f;
+
+        public ChapterButton(int x, int y, int w, int h, Component msg, ItemStack icon, OnPress onPress) {
+            super(x, y, w, h, msg, onPress, DEFAULT_NARRATION);
+            this.icon = icon;
+        }
