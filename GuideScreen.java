@@ -52,6 +52,13 @@ public class GuideScreen extends Screen {
     private int searchDebounceTicks = 0;
     private int currentMenuPage = 0;
 
+    private final java.util.Stack<String> chapterHistoryBack = new java.util.Stack<>();
+    private final java.util.Stack<String> chapterHistoryForward = new java.util.Stack<>();
+
+    private net.minecraft.client.gui.components.Button backChapterButton;
+    private net.minecraft.client.gui.components.Button forwardChapterButton;
+
+
     public GuideScreen() {
         this(GuideMod.MODID);
     }
@@ -153,6 +160,33 @@ public class GuideScreen extends Screen {
         if (this.customCursor == 0L) {
             this.applyCustomCursor();
         }
+
+        int rightCornerX = width - 120;
+        int topY = 15;
+        this.backChapterButton = net.minecraft.client.gui.components.Button.builder(
+                net.minecraft.network.chat.Component.translatable("guide.button.nav_back"),
+                button -> {
+                    if (!chapterHistoryBack.isEmpty()) {
+                        String prevId = chapterHistoryBack.pop();
+                        this.openChapterFromNavigation(prevId, 1); // 1 - Назад
+                    }
+                }
+        ).bounds(rightCornerX, topY, 55, 16).build();
+
+        this.backChapterButton.visible = !chapterHistoryBack.isEmpty();
+        this.addRenderableWidget(this.backChapterButton);
+        this.forwardChapterButton = net.minecraft.client.gui.components.Button.builder(
+                net.minecraft.network.chat.Component.translatable("guide.button.nav_forward"),
+                button -> {
+                    if (!chapterHistoryForward.isEmpty()) {
+                        String nextId = chapterHistoryForward.pop();
+                        this.openChapterFromNavigation(nextId, 2);
+                    }
+                }
+        ).bounds(rightCornerX + 57, topY, 55, 16).build();
+
+        this.forwardChapterButton.visible = !chapterHistoryForward.isEmpty();
+        this.addRenderableWidget(this.forwardChapterButton);
     }
 
     private void initControlButtons() {
@@ -983,11 +1017,10 @@ public class GuideScreen extends Screen {
                         int idx = Integer.parseInt(target.substring(8));
                         renderer.toggleSpoiler(idx);
                         renderer.rebuildTextLines(width, height, !structurePanel.getStructureTabs().isEmpty());
-                        return true;
-                    } else if (navigator.navigateToFile(target)) {
-                        loadChapterContent();
-                        return true;
+                    } else {
+                        this.openChapterFromNavigation(target, 0);
                     }
+                    return true;
                 }
             }
         }
@@ -1197,5 +1230,35 @@ public class GuideScreen extends Screen {
         }
 
         return table;
+    }
+
+    public void openChapterFromNavigation(String newChapterFile, int navigationType) {
+        String currentFile = getCurrentChapterFile();
+
+        if (currentFile != null && !currentFile.isEmpty()) {
+            if (navigationType == 0) {
+                chapterHistoryBack.push(currentFile);
+                chapterHistoryForward.clear();
+            } else if (navigationType == 1) {
+                chapterHistoryForward.push(currentFile);
+            } else if (navigationType == 2) {
+                chapterHistoryBack.push(currentFile);
+            }
+        }
+
+        int targetIdx = navigator.getChapterFiles().indexOf(newChapterFile);
+        if (targetIdx != -1) {
+            navigator.currentChapterIndex = targetIdx;
+        }
+        navigator.activeSubmenuFileOverride = newChapterFile;
+
+        this.loadChapterContent();
+
+        if (this.backChapterButton != null) {
+            this.backChapterButton.visible = !chapterHistoryBack.isEmpty();
+        }
+        if (this.forwardChapterButton != null) {
+            this.forwardChapterButton.visible = !chapterHistoryForward.isEmpty();
+        }
     }
 }
