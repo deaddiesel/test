@@ -246,12 +246,6 @@ public class GuideScreen extends Screen {
                 ? Component.translatable("guide.button.fav_filter_on")
                 : Component.translatable("guide.button.fav_filter_off");
 
-        Button btnFavoritesToggle = Button.builder(favFilterComp, btn -> {
-            navigator.isFavoritesFilterActive = !navigator.isFavoritesFilterActive;
-            rebuildWidgets();
-        }).bounds(10, bottomRowY, 50, 16).build();
-        addRenderableWidget(btnFavoritesToggle);
-
         String currentFile = (navigator.activeSubmenuFileOverride != null)
                 ? navigator.activeSubmenuFileOverride
                 : getCurrentChapterFile();
@@ -260,12 +254,27 @@ public class GuideScreen extends Screen {
                 ? Component.translatable("guide.button.fav_add_on")
                 : Component.translatable("guide.button.fav_add_off");
 
+        Button btnBackToSelector = Button.builder(Component.literal("<<"), btn ->
+                net.minecraft.client.Minecraft.getInstance().setScreen(new com.deaddiesel.mods.guide.BookSelectorScreen())
+        ).bounds(10, bottomRowY, 16, 16).build();
+
+        btnBackToSelector.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.translatable("guide.tooltip.back_to_selector")
+        ));
+        addRenderableWidget(btnBackToSelector);
+
+        Button btnFavoritesToggle = Button.builder(favFilterComp, btn -> {
+            navigator.isFavoritesFilterActive = !navigator.isFavoritesFilterActive;
+            rebuildWidgets();
+        }).bounds(28, bottomRowY, 42, 16).build();
+        addRenderableWidget(btnFavoritesToggle);
+
         Button btnAddToFavorites = Button.builder(favAddComp, btn -> {
             if (!currentFile.isEmpty()) {
                 navigator.toggleFavorite(currentFile);
                 rebuildWidgets();
             }
-        }).bounds(64, bottomRowY, 50, 16).build();
+        }).bounds(72, bottomRowY, 42, 16).build();
         addRenderableWidget(btnAddToFavorites);
     }
 
@@ -442,15 +451,16 @@ public class GuideScreen extends Screen {
 
         if (maxPages > 1) {
             int navY = height - 44;
+
             Button prevBtn = Button.builder(Component.literal("◀"), (btn) -> {
                 if (currentMenuPage > 0) { currentMenuPage--; rebuildWidgets(); }
-            }).bounds(10, navY, 20, 14).build();
+            }).bounds(10, navY, 16, 16).build();
             prevBtn.active = (currentMenuPage > 0);
             addRenderableWidget(prevBtn);
 
             Button nextBtn = Button.builder(Component.literal("▶"), (btn) -> {
                 if (currentMenuPage < maxPages - 1) { currentMenuPage++; rebuildWidgets(); }
-            }).bounds(94, navY, 20, 14).build();
+            }).bounds(98, navY, 16, 16).build();
             nextBtn.active = (currentMenuPage < maxPages - 1);
             addRenderableWidget(nextBtn);
         }
@@ -614,9 +624,43 @@ public class GuideScreen extends Screen {
         int structureCount = 0;
         final int MAX_STRUCTURES = 3;
 
+        List<String> currentTableLines = new ArrayList<>();
+        boolean insideTable = false;
+
         for (MarkdownParser.ParsedLine p : rawLines) {
             String line = p.text();
             if (line == null) continue;
+
+            String trimmed = line.trim();
+
+            if (trimmed.startsWith("|")) {
+                insideTable = true;
+                currentTableLines.add(line);
+                continue;
+            }
+
+            if (insideTable && !trimmed.startsWith("|")) {
+                insideTable = false;
+                if (!currentTableLines.isEmpty()) {
+                    GuideTable table = parseMarkdownTable(currentTableLines);
+                    if (table != null) {
+                        int textX = 125;
+                        int controlX = width - 160;
+                        int maxTextWidth = !structurePanel.getStructureTabs().isEmpty()
+                                ? Math.max(100, controlX - textX - 20)
+                                : Math.max(100, width - textX - 20);
+
+                        table.calculateSizes(maxTextWidth);
+                        renderer.tablesToRender.add(table);
+
+                        String tableMarker = "@table:" + (renderer.tablesToRender.size() - 1);
+                        renderer.originalMarkdownLines.add(tableMarker);
+                        renderer.rawTextLines.add(tableMarker);
+                        renderer.linkTargetsPerLine.add(new ArrayList<>());
+                    }
+                    currentTableLines.clear();
+                }
+            }
 
             if (line.startsWith("@tab:")) {
                 pendingTabName = line.substring(5).trim();
@@ -746,18 +790,60 @@ public class GuideScreen extends Screen {
                 renderer.originalMarkdownLines.add(line.trim());
                 renderer.rawTextLines.add(line.trim());
                 renderer.linkTargetsPerLine.add(new ArrayList<>());
-            }                 else {
+            } else {
                 String lineText = line.trim();
                 if (lineText.isEmpty()) {
                     renderer.rawTextLines.add("");
                     renderer.originalMarkdownLines.add("");
                     renderer.linkTargetsPerLine.add(new ArrayList<>());
                 } else {
-                    renderer.linkTargetsPerLine.add(renderer.extractLinkTargets(lineText));
-                    renderer.originalMarkdownLines.add(lineText);
-                    renderer.rawTextLines.add(renderer.processLinksForDisplay(lineText));
+                    String cleanLine = lineText.replaceAll("§.", "");
+                    if (cleanLine.equals("---") || cleanLine.equals("***") || cleanLine.matches("^-{3,}$") || cleanLine.matches("^\\*{3,}$")) {
+                        int colorHex = 0xFF3A3A3A;
+                        boolean isBold = lineText.toLowerCase().contains("§l");
+
+                        for (int pos = 0; pos < lineText.length() - 1; pos++) {
+                            if (lineText.charAt(pos) == '§') {
+                                char code = lineText.charAt(pos + 1);
+                                net.minecraft.ChatFormatting formatting = net.minecraft.ChatFormatting.getByCode(code);
+                                if (formatting != null && formatting.getColor() != null) {
+                                    colorHex = 0xFF000000 | formatting.getColor();
+                                    break;
+                                }
+                            }
+                        }
+
+                        String dividerMarker = "@divider:" + Integer.toHexString(colorHex) + ":" + isBold;
+                        renderer.originalMarkdownLines.add(dividerMarker);
+                        renderer.rawTextLines.add(dividerMarker);
+                        renderer.linkTargetsPerLine.add(new ArrayList<>());
+                    } else {
+                        renderer.linkTargetsPerLine.add(renderer.extractLinkTargets(lineText));
+                        renderer.originalMarkdownLines.add(lineText);
+                        renderer.rawTextLines.add(renderer.processLinksForDisplay(lineText));
+                    }
                 }
             }
+        }
+
+        if (insideTable && !currentTableLines.isEmpty()) {
+            GuideTable table = parseMarkdownTable(currentTableLines);
+            if (table != null) {
+                int textX = 125;
+                int controlX = width - 160;
+                int maxTextWidth = !structurePanel.getStructureTabs().isEmpty()
+                        ? Math.max(100, controlX - textX - 20)
+                        : Math.max(100, width - textX - 20);
+
+                table.calculateSizes(maxTextWidth);
+                renderer.tablesToRender.add(table);
+
+                String tableMarker = "@table:" + (renderer.tablesToRender.size() - 1);
+                renderer.originalMarkdownLines.add(tableMarker);
+                renderer.rawTextLines.add(tableMarker);
+                renderer.linkTargetsPerLine.add(new ArrayList<>());
+            }
+            currentTableLines.clear();
         }
 
         for (GuideRenderer.GifInfo gif : renderer.gifsToRender) {
@@ -912,11 +998,32 @@ public class GuideScreen extends Screen {
         return super.mouseClicked(mx, my, button);
     }
 
-    @Override public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+    @Override
+    public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
         if (button == 0 && isDraggingScroll) {
             handleScrollbarDrag(my);
             return true;
         }
+
+        int textX = 125;
+        int controlXForText = width - 160;
+        int maxTextWidth = !structurePanel.getStructureTabs().isEmpty()
+                ? Math.max(100, controlXForText - textX - 20)
+                : Math.max(100, width - textX - 20);
+
+        if (button == 0 && mx >= textX && mx <= textX + maxTextWidth && my >= 10 && my <= height - 90) {
+            for (GuideTable table : renderer.tablesToRender) {
+                if (table.getTotalTableWidth() > maxTextWidth) {
+                    table.horizontalScrollOffset -= (int) dx;
+
+                    int maxScrollX = table.getTotalTableWidth() - maxTextWidth;
+                    if (table.horizontalScrollOffset < 0) table.horizontalScrollOffset = 0;
+                    if (table.horizontalScrollOffset > maxScrollX) table.horizontalScrollOffset = maxScrollX;
+                }
+            }
+            return true;
+        }
+
         return super.mouseDragged(mx, my, button, dx, dy);
     }
 
@@ -1039,7 +1146,6 @@ public class GuideScreen extends Screen {
 
                     org.lwjgl.glfw.GLFWImage glfwImage = org.lwjgl.glfw.GLFWImage.malloc(stack).set(w, h, image);
 
-                    // 0, 0 — левый верхний кончик стрелки (hotspot), куда регистрируется клик
                     this.customCursor = org.lwjgl.glfw.GLFW.glfwCreateCursor(glfwImage, 0, 0);
 
                     org.lwjgl.stb.STBImage.stbi_image_free(image);
@@ -1060,5 +1166,36 @@ public class GuideScreen extends Screen {
             this.customCursor = 0L;
         }
         super.removed();
+    }
+
+    private GuideTable parseMarkdownTable(List<String> lines) {
+        if (lines.size() < 3) return null;
+
+        GuideTable table = new GuideTable();
+
+        String headerLine = lines.get(0);
+        String[] headerCells = headerLine.split("\\|");
+        for (int i = 0; i < headerCells.length; i++) {
+            String trimmedCell = headerCells[i].trim();
+            if (i == 0 && trimmedCell.isEmpty()) continue;
+            table.addHeader(trimmedCell);
+        }
+
+        for (int i = 2; i < lines.size(); i++) {
+            String rowLine = lines.get(i);
+            String[] rowCells = rowLine.split("\\|");
+            List<String> rowData = new ArrayList<>();
+
+            for (int j = 0; j < rowCells.length; j++) {
+                if (j == 0 && rowCells[j].trim().isEmpty()) continue;
+                rowData.add(rowCells[j].trim());
+            }
+
+            if (!rowData.isEmpty()) {
+                table.addRow(rowData);
+            }
+        }
+
+        return table;
     }
 }
